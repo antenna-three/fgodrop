@@ -10,6 +10,7 @@ from itertools import islice, groupby
 from operator import itemgetter
 import re
 from decimal import Decimal
+from string import ascii_lowercase
 
 def handler(event, context):
     sheet_id = '1DxFVWa1xsBh-TJVVTrJf7ttVxf7msCHhxuZyM-shPx0'
@@ -53,7 +54,19 @@ def merge(h0, h1):
     else:
         return h0
 
-def get_chapter(area):
+def base36(n):
+    '''
+    convert number in range(36) to base 36 string
+    '''
+    if n < 0 or 35 < n:
+        raise ValueError(f'Invalid base36 converting from {n}')
+    if n < 10:
+        return str(n)
+    else:
+        return ascii_lowercase[n - 10]
+
+
+def get_section(area):
     if '修練場' in area:
         return '修練場'
     elif area in ('冬木', 'オルレアン', 'セプテム', 'オケアノス',
@@ -72,7 +85,8 @@ class Csv:
         reader = csv.reader(self.csv_string.splitlines())
         header = list(islice(reader, 1, 3))
         # forward fill
-        header[0] = [f := i if i else f for i in header[0]]
+        f = ''
+        header[0] = [(f := i) if i else f for i in header[0]]
         merged_header = [merge(h[0], h[1])
                          for h in zip(*header)]
         self.table = [
@@ -80,20 +94,19 @@ class Csv:
             for row in reader
             if row[0] not in ('', 'エリア')
         ]
-        category_id = {category: i for i, category in enumerate(dict.fromkeys(header[0]))}
         items = [
-            (category, item)
-            for category, item in zip(header[0], merged_header)
-            if re.match('.素材|.石|ピース|モニュ', category) and item
+            (category, name)
+            for category, name in zip(header[0], merged_header)
+            if re.match('.素材|.石|ピース|モニュ', category) and name
         ]
         item_ids = {
-            item: f'{i * 100 + j}'
-            for i, (category, group) in enumerate(groupby(items, itemgetter(0)), 1)
-            for j, (category, item) in enumerate(group, 1)
+            name: base36(i) + base36(j)
+            for i, (category, group) in enumerate(groupby(items, itemgetter(0)))
+            for j, (category, name) in enumerate(group)
         }
         self.items = [
-            {'category': category, 'item': item, 'id': item_ids[item]}
-            for category, item in items
+            {'category': category, 'name': name, 'id': item_ids[name]}
+            for category, name in items
         ]
         quest_info_headers = {
             'AP': 'ap',
@@ -103,25 +116,37 @@ class Csv:
             'QP': 'qp'
         }
         quests = [
-            (get_chapter(area:=row['エリア']), area, row['クエスト名'])
+            (get_section(area:=row['エリア']), area, row['クエスト名'])
             for row in self.table
         ]
         quest_ids = {
-            quest: f'{i * 10000 + j * 100 + k}'
-            for i, (chapter, chapter_group) in enumerate(groupby(quests, itemgetter(0)), 1)
-            for j, (area, area_group) in enumerate(groupby(chapter_group, itemgetter(1)), 1)
-            for k, (chapter, area, quest) in enumerate(area_group, 1)
+            name: base36(i) + base36(j) + base36(k)
+            for i, (section, section_group) in enumerate(groupby(quests, itemgetter(0)))
+            for j, (area, area_group) in enumerate(groupby(section_group, itemgetter(1)))
+            for k, (section, area, name) in enumerate(area_group)
         }
         self.quests = [
             dict(
-                **{'chapter': chapter, 'area': area, 'quest': quest, 'id': quest_ids[quest]},
+                **{'section': section, 'area': area, 'name': name, 'id': quest_ids[name]},
                 **{
                     quest_info_headers[key]: int(value.replace(',', ''))
                     for key, value in row.items()
                     if key in quest_info_headers and value
                 }
             )
-            for (chapter, area, quest), row in zip(quests, self.table)
+            for (section, area, name), row in zip(quests, self.table)
+        ]
+        self.drop_rates = [
+            {
+                'quest_id': quest_ids[row['クエスト名']],
+                'quest_name': row['クエスト名'],
+                'item_id': item['id'],
+                'item_name': item['name'],
+                'drop_rate': float(Decimal(value) / 100)
+            }
+            for row in self.table
+            for item in self.items
+            if (value := row.get(item['name']))
         ]
         return self
 
@@ -129,15 +154,7 @@ class Csv:
         return Files({
             'quests': self.quests,
             'items': self.items,
-            'drop_rates': [
-                {
-                    'quest': row['クエスト名'],
-                    'item': i,
-                    'dropRate': float(Decimal(value) / 100)
-                }
-                for row in self.table for item in self.items
-                if (value := row.get(i:=item['item']))
-            ],
+            'drop_rates': self.drop_rates,
         })
 
 

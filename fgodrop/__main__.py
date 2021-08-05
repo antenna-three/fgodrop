@@ -1,3 +1,5 @@
+from collections import defaultdict
+from platform import version
 import boto3
 import botocore
 import os
@@ -6,11 +8,12 @@ import urllib.request
 import urllib.parse
 import csv
 import json
-from itertools import groupby, zip_longest
+from itertools import groupby
 from operator import itemgetter
 import re
 from decimal import Decimal
 from string import ascii_lowercase
+from pathlib import Path
 
 
 def merge(h0, h1):
@@ -46,13 +49,13 @@ def get_section(area):
     else:
         return '第2部'
 
-def parse(values):
+def parse(values, version):
     header = values[1:3]
     # forward fill
     f = ''
     header[0] = [(f := i) if i else f for i in header[0]]
     merged_header = [merge(h[0], h[1])
-                     for h in zip_longest(*header)]
+                     for h in zip(*header)]
     table = [
         {k: v for k, v in zip(merged_header, row)}
         for row in values[3:]
@@ -74,7 +77,7 @@ def parse(values):
     ]
     quest_info_headers = {
         'AP': 'ap',
-        'サンプル数': 'samples',
+        'サンプル数': 'samples_' + version,
         '基本絆P': 'bp',
         'EXP': 'exp',
         'QP': 'qp'
@@ -106,11 +109,12 @@ def parse(values):
             'quest_name': row['クエスト名'],
             'item_id': item['id'],
             'item_name': item['name'],
-            'drop_rate': float(Decimal(value) / 100)
+            'drop_rate_' + version: float(Decimal(value) / 100)
         }
         for row in table
         for item in items
         if (value := row.get(item['name']))
+        and not value.startswith('#')
     ]
     return {
         'quests': quests,
@@ -138,33 +142,58 @@ def update_s3_object(obj, body):
     if response_body == '404' or response_body != body:
         obj.put(Body=body)
 
-def export_to_s3(files, bucket_name):
+def update_s3_json(key, src):
     s3 = boto3.resource('s3')
-    for key, rows in files.items():
-        obj = s3.Object(bucket_name, key + '.csv')
-        with io.StringIO(newline='') as s:
-            writer = csv.DictWriter(s, rows[0].keys())
-            writer.writeheader()
-            writer.writerows(rows)
-            update_s3_object(obj, s.getvalue())
+    path = Path('/tmp/' + key + '.json')
+    obj = s3.Object('fgodrop', key + '.json')
+    obj.download_file(str(path))
+    with path.open('r', encoding='utf-8') as f:
+        dst = json.load(f)
+    items = defaultdict(dict)
+    for row in src['items'] + dst['items']:
+        items[row['id']].update(row)
+    quests = defaultdict(dict)
+    for row in src['quests'] + dst['quests']:
+        quests[row['id']].update(row)
+    drop_rates = defaultdict(dict)
+    for row in src['drop_rates'] + dst['drop_rates']:
+        drop_rates[row['quest_id'] + row['item_id']].update(row)
+    body = {
+        'items': list(items.values()),
+        'quests': list(quests.values()),
+        'drop_rates': list(drop_rates.values())
+    }
+    
+    if body != dst:
+        obj.put(Body=json.dumps(body, ensure_ascii=False))
+
+def export_to_s3(files):
+    update_s3_json('all', files)
+
+    #for key, rows in files.items():
+    #    obj = s3.Object(bucket_name, f'{key}_{version}.csv')
+    #    with io.StringIO(newline='') as s:
+    #        writer = csv.DictWriter(s, rows[0].keys())
+    #        writer.writeheader()
+    #        writer.writerows(rows)
+    #        update_s3_object(obj, s.getvalue())
 
 def handler(event, context):
+    version = '2'
     client = boto3.client(service_name='secretsmanager')
     secret_name = os.environ['SECRET_NAME']
     response = client.get_secret_value(SecretId=secret_name)
     secret = json.loads(response['SecretString'])
     google_sheets_api_key = secret['GOOGLE_SHEETS_API_KEY']
-    spreadsheet_id = '1DxFVWa1xsBh-TJVVTrJf7ttVxf7msCHhxuZyM-shPx0'
-    query = {
-        'ranges': 'ドロップ率表!A:DC',
-        'key': google_sheets_api_key
-    }
-    url = f'https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values:batchGet?{urllib.parse.urlencode(query)}'
+    #spreadsheet_id = '1DxFVWa1xsBh-TJVVTrJf7ttVxf7msCHhxuZyM-shPx0'
+    spreadsheet_id = '1CmH3z71ymRJMlBO11cBthABxKuqdHrzXwiKa3cqRrMQ'
+    spreadsheet_range = urllib.parse.quote('ドロップ率表')
+    url = f'https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{spreadsheet_range}?key={google_sheets_api_key}'
     with urllib.request.urlopen(url) as response:
         body = response.read()
     body = json.loads(body)
     if 'error' in body:
         return body
-    values = body['valueRanges'][0]['values']
-    parsed = parse(values)
-    export_to_s3(parsed, 'fgodrop')
+    values = body['values']
+    parsed = parse(values, version)
+    export_to_s3(parsed)

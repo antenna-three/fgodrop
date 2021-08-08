@@ -3,7 +3,6 @@ from platform import version
 import boto3
 import botocore
 import os
-import io
 import urllib.request
 import urllib.parse
 import csv
@@ -14,9 +13,10 @@ import re
 from decimal import Decimal
 from string import ascii_lowercase
 from pathlib import Path
+import tarfile
 
 
-def merge(h0, h1):
+def merge_header(h0, h1):
     if '素材' in h0:
         return h1
     elif re.match('.石|ピース|モニュ', h0):
@@ -27,16 +27,18 @@ def merge(h0, h1):
     else:
         return h0
 
+
 def base36(n):
     '''
     convert number in range(36) to base 36 string
     '''
     if n < 0 or 35 < n:
         raise ValueError(f'Invalid base36 converting from {n}')
-    if n < 10:
+    elif n < 10:
         return str(n)
     else:
         return ascii_lowercase[n - 10]
+
 
 def get_section(area):
     if '修練場' in area:
@@ -49,12 +51,13 @@ def get_section(area):
     else:
         return '第2部'
 
+
 def parse(values, version):
     header = values[1:3]
     # forward fill
     f = ''
     header[0] = [(f := i) if i else f for i in header[0]]
-    merged_header = [merge(h[0], h[1])
+    merged_header = [merge_header(h[0], h[1])
                      for h in zip(*header)]
     table = [
         {k: v for k, v in zip(merged_header, row)}
@@ -106,9 +109,7 @@ def parse(values, version):
     drop_rates = [
         {
             'quest_id': quest_ids[row['クエスト名']],
-            'quest_name': row['クエスト名'],
             'item_id': item['id'],
-            'item_name': item['name'],
             'drop_rate_' + version: float(Decimal(value) / 100)
         }
         for row in table
@@ -123,77 +124,95 @@ def parse(values, version):
     }
 
 
-def export_to_dir(files, dir_):
-    for file_name, rows in files.items():
-        with open(dir_ + '/' + file_name + '.csv', 'w', encoding='utf-8', newline='') as f:
+def merge_files(src, dst):
+    return {
+        'items': merge_rows(src['items'], dst['items'], 'id'),
+        'quests': merge_rows(src['quests'], dst['quests'], 'id'),
+        'drop_rates': merge_rows(src['drop_rates'], dst['drop_rates'], 'item_id', 'quest_id')
+    }
+
+
+def merge_rows(src, dst, *keys):
+    dd = defaultdict(dict)
+    for row in src + dst:
+        dd[''.join(row[key] for key in keys)].update(row)
+    return list(dd.values())
+
+
+def get_tar(obj, *keys):
+    tar_path = Path('/tmp/src.tar.gz')
+    files = {k: [] for k in keys}
+    try:
+        obj.download_file(str(tar_path))
+    except botocore.exceptions.ClientError:
+        pass
+    else:
+        dst = Path('/tmp/dst')
+        with tarfile.open(tar_path, 'r') as t:
+            t.extractall(dst)
+        for key in keys:
+            with open(dst / (key + '.csv'), encoding='utf-8') as f:
+                files[key] = list(csv.DictReader(f))
+    return files
+
+
+def put_tar(obj, files):
+    src_path = Path('/tmp/src')
+    tar_path = Path('/tmp/src.tar.gz')
+    src_path.mkdir()
+
+    for key, rows in files.items():
+        with open(src_path / (key + '.csv'), 'w', newline='') as f:
             writer = csv.DictWriter(f, rows[0].keys())
             writer.writeheader()
             writer.writerows(rows)
 
-def update_s3_object(obj, body):
-    try:
-        response_body = obj.get()['Body'].read().decode('utf-8')
-    except botocore.exceptions.ClientError as e:
-        if e.response['Error']['Code'] == 'NoSuchKey':
-            response_body = '404'
-        else:
-            print(e.response)
-            raise
-    if response_body == '404' or response_body != body:
-        obj.put(Body=body)
+    with tarfile.open(tar_path, 'w:gz') as t:
+        for key in files.keys():
+            t.add(src_path / (key + '.csv'), key + '.csv')
 
-def update_s3_json(key, src):
-    s3 = boto3.resource('s3')
-    path = Path('/tmp/' + key + '.json')
-    obj = s3.Object('fgodrop', key + '.json')
-    obj.download_file(str(path))
-    with path.open('r', encoding='utf-8') as f:
-        dst = json.load(f)
-    items = defaultdict(dict)
-    for row in src['items'] + dst['items']:
-        items[row['id']].update(row)
-    quests = defaultdict(dict)
-    for row in src['quests'] + dst['quests']:
-        quests[row['id']].update(row)
-    drop_rates = defaultdict(dict)
-    for row in src['drop_rates'] + dst['drop_rates']:
-        drop_rates[row['quest_id'] + row['item_id']].update(row)
-    body = {
-        'items': list(items.values()),
-        'quests': list(quests.values()),
-        'drop_rates': list(drop_rates.values())
-    }
-    
-    if body != dst:
-        obj.put(Body=json.dumps(body, ensure_ascii=False))
+    obj.upload_file(str(tar_path))
+
+
+def put_json(obj, body):
+    obj.put(Body=json.dumps(body, ensure_ascii=False))
+
 
 def export_to_s3(files):
-    update_s3_json('all', files)
+    s3 = boto3.resource('s3')
+    obj = s3.Object('fgodrop', 'all.tar.gz')
+    src = get_tar(obj, 'items', 'quests', 'drop_rates')
+    dst = merge_files(src, files)
+    if src != dst:
+        put_tar(obj, dst)
+        put_json(obj, dst)
 
-    #for key, rows in files.items():
-    #    obj = s3.Object(bucket_name, f'{key}_{version}.csv')
-    #    with io.StringIO(newline='') as s:
-    #        writer = csv.DictWriter(s, rows[0].keys())
-    #        writer.writeheader()
-    #        writer.writerows(rows)
-    #        update_s3_object(obj, s.getvalue())
 
-def handler(event, context):
-    version = '2'
+def get_secret(key):
     client = boto3.client(service_name='secretsmanager')
     secret_name = os.environ['SECRET_NAME']
     response = client.get_secret_value(SecretId=secret_name)
     secret = json.loads(response['SecretString'])
-    google_sheets_api_key = secret['GOOGLE_SHEETS_API_KEY']
-    #spreadsheet_id = '1DxFVWa1xsBh-TJVVTrJf7ttVxf7msCHhxuZyM-shPx0'
-    spreadsheet_id = '1CmH3z71ymRJMlBO11cBthABxKuqdHrzXwiKa3cqRrMQ'
-    spreadsheet_range = urllib.parse.quote('ドロップ率表')
-    url = f'https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{spreadsheet_range}?key={google_sheets_api_key}'
+    return secret[key]
+
+
+def get_values(spreadsheet_id, spreadsheet_range, api_key):
+    url = f'https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{spreadsheet_range}?key={api_key}'
     with urllib.request.urlopen(url) as response:
         body = response.read()
     body = json.loads(body)
     if 'error' in body:
         return body
-    values = body['values']
+    return body['values']
+
+
+def handler(event, context):
+    #spreadsheet_id = '1DxFVWa1xsBh-TJVVTrJf7ttVxf7msCHhxuZyM-shPx0'
+    values=get_values(
+        spreadsheet_id='1CmH3z71ymRJMlBO11cBthABxKuqdHrzXwiKa3cqRrMQ',
+        spreadsheet_range=urllib.parse.quote('ドロップ率表'),
+        api_key=get_secret('GOOGLE_SHEETS_API_KEY')
+    )
+    version = '2'
     parsed = parse(values, version)
     export_to_s3(parsed)

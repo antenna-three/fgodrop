@@ -1,19 +1,17 @@
 from collections import defaultdict
-from platform import version
 import boto3
 import botocore
 import os
 import urllib.request
 import urllib.parse
-import csv
 import json
 from itertools import groupby
 from operator import itemgetter
 import re
 from decimal import Decimal
 from string import ascii_lowercase
-from pathlib import Path
-import tarfile
+import gzip
+import io
 
 
 def merge_header(h0, h1):
@@ -60,7 +58,7 @@ def parse(values, version):
     merged_header = [merge_header(h[0], h[1])
                      for h in zip(*header)]
     table = [
-        {k: v for k, v in zip(merged_header, row)}
+        {k: v for k, v in zip(merged_header, row) if v}
         for row in values[3:]
         if row and row[0] not in ('', 'エリア')
     ]
@@ -106,6 +104,9 @@ def parse(values, version):
         )
         for (section, area, name), row in zip(quests, table)
     ]
+    for quest in quests:
+        if quest['id'][0] == '0':
+            quest['ap'] = (4 - int(quest['id'][-1])) * 10
     drop_rates = [
         {
             'quest_id': quest_ids[row['クエスト名']],
@@ -124,7 +125,7 @@ def parse(values, version):
     }
 
 
-def merge_files(src, dst):
+def merge(src, dst):
     return {
         'items': merge_rows(src['items'], dst['items'], 'id'),
         'quests': merge_rows(src['quests'], dst['quests'], 'id'),
@@ -139,53 +140,35 @@ def merge_rows(src, dst, *keys):
     return list(dd.values())
 
 
-def get_tar(obj, *keys):
-    tar_path = Path('/tmp/src.tar.gz')
-    files = {k: [] for k in keys}
-    try:
-        obj.download_file(str(tar_path))
-    except botocore.exceptions.ClientError:
-        pass
-    else:
-        dst = Path('/tmp/dst')
-        with tarfile.open(tar_path, 'r') as t:
-            t.extractall(dst)
-        for key in keys:
-            with open(dst / (key + '.csv'), encoding='utf-8') as f:
-                files[key] = list(csv.DictReader(f))
-    return files
+def get_gzip(obj):
+    body = obj.get()['Body'].read()
+    bio = io.BytesIO(body)
+    with gzip.open(bio, 'rt', encoding='utf-8') as f:
+        d = json.load(f)
+    for key, value in d.items():
+        d[key] = [
+            {k: v for k, v in row.items() if v != ""}
+            for row in value
+        ]
+    d['quests'] = [{**row, 'samples_1': int(row['samples_1'])} for row in d['quests'] if 'samples_1' in row]
+    d['drop_rates'] = [{**row, 'drop_rate_1': float(row['drop_rate_1'])} for row in d['drop_rates'] if 'drop_rate_1' in row]
+    return d
 
 
-def put_tar(obj, files):
-    src_path = Path('/tmp/src')
-    tar_path = Path('/tmp/src.tar.gz')
-    src_path.mkdir()
-
-    for key, rows in files.items():
-        with open(src_path / (key + '.csv'), 'w', newline='') as f:
-            writer = csv.DictWriter(f, rows[0].keys())
-            writer.writeheader()
-            writer.writerows(rows)
-
-    with tarfile.open(tar_path, 'w:gz') as t:
-        for key in files.keys():
-            t.add(src_path / (key + '.csv'), key + '.csv')
-
-    obj.upload_file(str(tar_path))
+def put_gzip(obj, body):
+    bio = io.BytesIO()
+    with gzip.open(bio, 'wt', encoding='utf-8') as f:
+        json.dump(body, f, ensure_ascii=False)
+    obj.put(Body=bio.getvalue())
 
 
-def put_json(obj, body):
-    obj.put(Body=json.dumps(body, ensure_ascii=False))
-
-
-def export_to_s3(files):
+def export_to_s3(body):
     s3 = boto3.resource('s3')
-    obj = s3.Object('fgodrop', 'all.tar.gz')
-    src = get_tar(obj, 'items', 'quests', 'drop_rates')
-    dst = merge_files(src, files)
-    if src != dst:
-        put_tar(obj, dst)
-        put_json(obj, dst)
+    obj = s3.Object('fgodrop', 'all.json.gz')
+    old = get_gzip(obj)
+    new = merge(old, body)
+    if old != new:
+        put_gzip(obj, new)
 
 
 def get_secret(key):

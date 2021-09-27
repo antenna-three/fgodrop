@@ -181,6 +181,7 @@ def get_secret(key):
 
 def get_values(spreadsheet_id, spreadsheet_range, api_key):
     url = f'https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{spreadsheet_range}?key={api_key}'
+    print(url)
     with urllib.request.urlopen(url) as response:
         body = response.read()
     body = json.loads(body)
@@ -194,7 +195,7 @@ def handler(event, context):
     values=get_values(
         spreadsheet_id='1CmH3z71ymRJMlBO11cBthABxKuqdHrzXwiKa3cqRrMQ',
         spreadsheet_range=urllib.parse.quote('ドロップ率表'),
-        api_key=get_secret('GOOGLE_SHEETS_API_KEY')
+        api_key=os.environ.get('GOOGLE_SHEETS_API_KEY')
     )
     version = '2'
     parsed = parse(values, version)

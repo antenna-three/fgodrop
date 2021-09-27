@@ -181,7 +181,6 @@ def get_secret(key):
 
 def get_values(spreadsheet_id, spreadsheet_range, api_key):
     url = f'https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{spreadsheet_range}?key={api_key}'
-    print(url)
     with urllib.request.urlopen(url) as response:
         body = response.read()
     body = json.loads(body)

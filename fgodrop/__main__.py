@@ -42,7 +42,7 @@ def get_section(area):
     if '修練場' in area:
         return '修練場'
     elif area in ('冬木', 'オルレアン', 'セプテム', 'オケアノス',
-                'ロンドン', '北米', 'キャメロット', 'バビロニア'):
+                  'ロンドン', '北米', 'キャメロット', 'バビロニア'):
         return '第1部'
     elif area in ('新宿', 'アガルタ', '下総国', 'セイレム'):
         return '第1.5部'
@@ -60,7 +60,7 @@ def parse(values, version):
     table = [
         {k: v for k, v in zip(merged_header, row) if v}
         for row in values[3:]
-        if row and row[0] not in ('', 'エリア')
+        if row and row[0] not in ('', 'エリア', 'HOME')
     ]
     items = [
         (category, name)
@@ -84,7 +84,7 @@ def parse(values, version):
         'QP': 'qp'
     }
     quests = [
-        (get_section(area:=row['エリア']), area, row['クエスト名'])
+        (get_section(area := row['エリア']), area, row['クエスト名'])
         for row in table
     ]
     quest_ids = {
@@ -150,8 +150,10 @@ def get_gzip(obj):
             {k: v for k, v in row.items() if v != ""}
             for row in value
         ]
-    d['quests'] = [{**row, 'samples_1': int(row['samples_1'])} for row in d['quests'] if 'samples_1' in row]
-    d['drop_rates'] = [{**row, 'drop_rate_1': float(row['drop_rate_1'])} for row in d['drop_rates'] if 'drop_rate_1' in row]
+    d['quests'] = [{**row, 'samples_1': int(row['samples_1'])}
+                   for row in d['quests'] if 'samples_1' in row]
+    d['drop_rates'] = [{**row, 'drop_rate_1': float(row['drop_rate_1'])}
+                       for row in d['drop_rates'] if 'drop_rate_1' in row]
     return d
 
 
@@ -191,8 +193,10 @@ def get_values(spreadsheet_id, spreadsheet_range, api_key):
 
 def handler(event, context):
     #spreadsheet_id = '1DxFVWa1xsBh-TJVVTrJf7ttVxf7msCHhxuZyM-shPx0'
-    values=get_values(
-        spreadsheet_id='1CmH3z71ymRJMlBO11cBthABxKuqdHrzXwiKa3cqRrMQ',
+    #spreadsheet_id = '1CmH3z71ymRJMlBO11cBthABxKuqdHrzXwiKa3cqRrMQ'
+    spreadsheet_id = '1qjiymRgcpdAYv201jdzcfRSPKrNaquNRJGIRYFlaimo'
+    values = get_values(
+        spreadsheet_id=spreadsheet_id,
         spreadsheet_range=urllib.parse.quote('ドロップ率表'),
         api_key=os.environ.get('GOOGLE_SHEETS_API_KEY')
     )

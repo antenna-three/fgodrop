@@ -161,12 +161,12 @@ def put_gzip(obj, body):
     bio = io.BytesIO()
     with gzip.open(bio, 'wt', encoding='utf-8') as f:
         json.dump(body, f, ensure_ascii=False)
-    obj.put(Body=bio.getvalue(), ContentEncoding='gzip')
+    obj.put(Body=bio.getvalue())
 
 
 def export_to_s3(body):
     s3 = boto3.resource('s3')
-    obj = s3.Object('fgodrop', 'all.json')
+    obj = s3.Object('fgodrop', 'all.json.gz')
     old = get_gzip(obj)
     new = merge(old, body)
     if old != new:

@@ -104,9 +104,10 @@ def parse(values, version):
         )
         for (section, area, name), row in zip(quests, table)
     ]
+    training_aps = {'極級': 40, '超級': 40, '上級': 30, '中級': 20, '初級': 10}
     for quest in quests:
         if quest['id'][0] == '0':
-            quest['ap'] = (4 - int(quest['id'][-1])) * 10
+            quest['ap'] = training_aps.get(quest['name'][-2:], quest['ap'])
     drop_rates = [
         {
             'quest_id': quest_ids[row['クエスト名']],

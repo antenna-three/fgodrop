@@ -1,17 +1,18 @@
-from collections import defaultdict
-import boto3
-import botocore
-import os
-import urllib.request
-import urllib.parse
-import json
-from itertools import groupby
-from operator import itemgetter
-import re
-from decimal import Decimal
-from string import ascii_lowercase
 import gzip
 import io
+import json
+import os
+import re
+import urllib.parse
+import urllib.request
+from collections import defaultdict
+from decimal import Decimal
+from itertools import groupby
+from operator import itemgetter
+from string import ascii_lowercase
+
+import boto3
+import botocore
 
 
 def merge_header(h0, h1):
@@ -19,7 +20,7 @@ def merge_header(h0, h1):
         return h1
     elif re.match('.石|ピース|モニュ', h0):
         if h1:
-            return h1 + h0[0]
+            return h1
         else:
             return ''
     else:
@@ -78,7 +79,7 @@ def parse(values, version):
     ]
     quest_info_headers = {
         'AP': 'ap',
-        'サンプル数': 'samples_' + version,
+        'データ数': 'samples_' + version,
         '基本絆P': 'bp',
         'EXP': 'exp',
         'QP': 'qp'

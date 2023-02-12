@@ -52,7 +52,7 @@ def get_section(area):
 
 
 def parse(values, version):
-    header = values[38:40]
+    header = values[1:3]
     # forward fill
     f = ''
     header[0] = [(f := i) if i else f for i in header[0]]

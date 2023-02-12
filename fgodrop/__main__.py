@@ -15,18 +15,6 @@ import boto3
 import botocore
 
 
-def merge_header(h0, h1):
-    if '素材' in h0:
-        return h1
-    elif re.match('.石|ピース|モニュ', h0):
-        if h1:
-            return h1
-        else:
-            return ''
-    else:
-        return h0
-
-
 def base36(n):
     '''
     convert number in range(36) to base 36 string
@@ -52,20 +40,21 @@ def get_section(area):
 
 
 def parse(values, version):
-    header = values[38:40]
-    # forward fill
+    header = values[1:3]
+    # 1行目をx方向にforward fill
     f = ''
-    header[0] = [(f := i) if i else f for i in header[0]]
-    merged_header = [merge_header(h[0], h[1])
-                     for h in zip(*header)]
+    header[0] = [(f := i) if i and j else i or f for i,
+                 j in zip(*header)]
+    # y方向にforward/back fill
+    header = list(zip(*[[i or j, j or i] for i, j in zip(*header)]))
     table = [
-        {k: v for k, v in zip(merged_header, row) if v}
+        {k: v for k, v in zip(header[1], row) if v}
         for row in values[3:]
-        if row and row[0] not in ('', 'エリア', 'HOME')
+        if row and row[0] and row[0] != 'エリア'
     ]
     items = [
         (category, name)
-        for category, name in zip(header[0], merged_header)
+        for category, name in zip(*header)
         if re.match('.素材|.石|ピース|モニュ', category) and name
     ]
     item_ids = {

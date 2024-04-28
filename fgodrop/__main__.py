@@ -184,8 +184,8 @@ def get_values(spreadsheet_id, spreadsheet_range, api_key):
 
 def handler(event, context):
     #spreadsheet_id = '1DxFVWa1xsBh-TJVVTrJf7ttVxf7msCHhxuZyM-shPx0'
-    #spreadsheet_id = '1CmH3z71ymRJMlBO11cBthABxKuqdHrzXwiKa3cqRrMQ'
-    spreadsheet_id = '1qjiymRgcpdAYv201jdzcfRSPKrNaquNRJGIRYFlaimo'
+    spreadsheet_id = '1CmH3z71ymRJMlBO11cBthABxKuqdHrzXwiKa3cqRrMQ'
+    #spreadsheet_id = '1qjiymRgcpdAYv201jdzcfRSPKrNaquNRJGIRYFlaimo'
     values = get_values(
         spreadsheet_id=spreadsheet_id,
         spreadsheet_range=urllib.parse.quote('ドロップ率表'),

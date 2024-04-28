@@ -20,7 +20,7 @@ Resources:
     Properties:
       CodeUri: fgodrop/
       Handler: __main__.handler
-      Runtime: python3.12
+      Runtime: python3.8
       Environment:
         Variables:
           GOOGLE_SHEETS_API_KEY: !Ref GoogleSheetsApiKey

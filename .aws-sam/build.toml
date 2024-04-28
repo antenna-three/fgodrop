@@ -3,7 +3,7 @@
 [function_build_definitions]
 [function_build_definitions.f3c04f20-2878-4c08-8172-a6686da3c0d2]
 codeuri = "D:\\Documents\\aws\\fgodrop\\fgodrop"
-runtime = "python3.12"
+runtime = "python3.8"
 source_md5 = ""
 architecture = "x86_64"
 packagetype = "Zip"
